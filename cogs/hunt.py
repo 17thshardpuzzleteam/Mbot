@@ -144,10 +144,15 @@ class HuntCog(commands.Cog):
             return DBase(ctx).round_get_row(ctx.guild.id, name=round_name)
         return DBase(ctx).round_get_row(ctx.guild.id, category_id=ctx.message.channel.category.id)
 
-    def get_puzzle_db_info(self, ctx, puzzle_name=None):
+    def get_puzzle_db_info(self, ctx, hunt_category_id, puzzle_name=None):
         if puzzle_name is not None:
-            return DBase(ctx).puzzle_get_row(ctx.guild.id, name=puzzle_name)
-        return DBase(ctx).puzzle_get_row(ctx.guild.id, channel_id=ctx.message.channel.id)
+            return DBase(ctx).puzzle_get_row(ctx.guild.id, hunt_category_id, name=puzzle_name)
+        return DBase(ctx).puzzle_get_row(ctx.guild.id, hunt_category_id, channel_id=ctx.message.channel.id)
+
+    def get_puzzle_db_feeders(self, ctx, hunt_category_id, puzzle_name=None):
+        if puzzle_name is not None:
+            return DBase(ctx).puzzle_get_feeders(ctx.guild.id, hunt_category_id, name=puzzle_name)
+        return DBase(ctx).puzzle_get_feeders(ctx.guild.id, hunt_category_id, channel_id=ctx.message.channel.id)
 
     def is_bighunt(self, hunt_info):
         return hunt_info['is_bighunt'] or False
@@ -724,7 +729,7 @@ class HuntCog(commands.Cog):
         elif self.is_bighunt(hunt_info) and self.check_server_channel_list(ctx, puzzlename):
             await ctx.send('Channel named `{}` already exists in current server.'.format(puzzlename))
             return False
-        puzzle = self.get_puzzle_db_info(ctx, puzzle_name=puzzlename)
+        puzzle = self.get_puzzle_db_info(ctx, hunt_info['category_id'], puzzle_name=puzzlename)
         if puzzle is not None:
             await ctx.send('Puzzle named `{}` already exists in Nexus.'.format(puzzlename))
             return False
@@ -1081,7 +1086,7 @@ class HuntCog(commands.Cog):
         hunt_info = await self.get_hunt_db_info(ctx)
 
         if not query:
-            await ctx.send('`!update [-round=<>] [-number=<>] [-name=<>] [-priority=<>] [-notes=<>]` in appropriate channel')
+            await ctx.send('`!update [-name=<>] [-priority=<>] [-notes=<>] [-is-meta=<true|false>]` in appropriate channel')
             return
 
         # get dict of fields to be changed
@@ -1090,7 +1095,7 @@ class HuntCog(commands.Cog):
         for item in query:
             try:
                 quer = item.split('=')
-                updatedict[quer[0]] = quer[1]
+                updatedict[quer[0].lower()] = quer[1]
             except:
                 continue
 
@@ -1138,9 +1143,50 @@ class HuntCog(commands.Cog):
                 nexussheet.update_cell(row_select, col_select, updatedict[item])
                 db_update_data.append((item, updatedict[item]))
                 await ctx.send('Updated column Notes for puzzle: {}'.format(puzzlename))
+            elif item == 'meta' or item == 'ismeta':
+                col_select = lib['Number'][0] + 1
+                if updatedict[item].lower() == 'true' or updatedict[item].lower() == 't':
+                    is_meta = True
+                else:
+                    is_meta = False
+                nexussheet.update_cell(row_select, col_select, 'M' if is_meta else '')
+                db_update_data.append(('is_meta', is_meta))
+                await ctx.send('Updated column Is Meta for puzzle: {}'.format(puzzlename))
             else:
                 await ctx.send('Check key name. Column {} not updateable via bot.'.format(item))
         DBase(ctx).puzzle_update_row(db_update_data, ctx.guild.id, hunt_info['category_id'], ctx.message.channel.id)
+
+    @commands.command(aliases=['feeders'])
+    @commands.guild_only()
+    async def puzzle_feeders(self, ctx, *, query=None):
+        hunt_info = await self.get_hunt_db_info(ctx)
+        puzzle_info = self.get_puzzle_db_info(ctx, hunt_info['category_id'])
+        if not puzzle_info['is_meta']:
+            await ctx.send('`{}` is not a meta!').format(puzzle_info['name'])
+            return
+
+        if query is None or query == 'list':
+            embed = discord.Embed(
+                title='Feeders for ' + puzzle_info['name'],
+                colour=discord.Colour.dark_green()
+            )
+            ret = ''
+            feeders = DBase(ctx).puzzle_get_feeders(ctx.guild.id, hunt_info['category_id'], channel_id=ctx.message.channel.id)
+            for n in range(0, len(feeders)):
+                ret += '<#' + str(feeders[n]['channel_id']) + '>' + (' (' + feeders[n]['answer'] + ')' if feeders[n]['answer'] is not None else '') + '\n'
+            embed.add_field(name='', value=ret, inline=False)
+            await ctx.send(embed=embed)
+        elif query.startswith('add '):
+            lines = query.splitlines()
+            lines[0] = lines[0][4:]
+            db_update_data = []
+            for line in lines:
+                db_update_data.append((puzzle_info['id'], line))
+            DBase(ctx).puzzle_feeders_insert_rows(db_update_data, ctx.guild.id, hunt_info['category_id'])
+            await ctx.send('Added feeders to puzzle: `{}`'.format(puzzle_info['name']))
+        else:
+            await ctx.send('Usage: `!feeders list` or `!feeders add <feeders, separated by newlines>`')
+
 
     @commands.command(aliases=['check','checksetup'])
     @commands.guild_only()
