@@ -136,19 +136,23 @@ class DBase:
         cursor.close()
         return
 
-    def puzzle_get_row(self, guild_id, channel_id=None, name=None):
+    def puzzle_get_row(self, guild_id, hunt_category_id, channel_id=None, name=None):
         cursor = self.conn.cursor()
         if channel_id is not None:
             res = cursor.execute("""
-                SELECT * FROM hunts_Puzzle WHERE (SELECT guild_id FROM hunts_Hunt WHERE id = hunt_id) = ? AND channel_id = ?
-            """, (guild_id, channel_id))
+                SELECT * FROM hunts_Puzzle WHERE
+                    (?, ?) IN (SELECT guild_id, category_id FROM hunts_Hunt WHERE id = hunt_id) AND
+                    channel_id = ?
+            """, (guild_id, hunt_category_id, channel_id))
             puzzle = res.fetchone()
             if puzzle is not None:
                 return puzzle
         elif name is not None:
             res = cursor.execute("""
-                SELECT * FROM hunts_Puzzle WHERE (SELECT guild_id FROM hunts_Hunt WHERE id = hunt_id) = ? AND name = ?
-            """, (guild_id, name))
+                SELECT * FROM hunts_Puzzle WHERE
+                    (?, ?) IN (SELECT guild_id, category_id FROM hunts_Hunt WHERE id = hunt_id) AND
+                    name = ?
+            """, (guild_id, hunt_category_id, name))
             puzzle = res.fetchone()
             if puzzle is not None:
                 return puzzle
@@ -191,6 +195,66 @@ class DBase:
         self.conn.commit()
         cursor.close()
         return
+
+    def puzzle_feeders_insert_rows(self, update_data, guild_id, hunt_category_id):
+        cursor = self.conn.cursor()
+        res = cursor.execute("""
+            SELECT id FROM hunts_Hunt WHERE guild_id = ? AND category_id = ?
+        """, (guild_id, hunt_category_id))
+        hunt = res.fetchone()
+        for d in range(len(update_data)):
+            old_datum = update_data[d]
+            update_data[d] = (old_datum[0], guild_id, old_datum[1])
+        if hunt is None:
+            raise Exception('Could not find a hunt!')
+        cursor.executemany("""
+            INSERT INTO hunts_Puzzle_Feeders (from_puzzle_id, to_puzzle_id) VALUES (
+                ?,
+                (SELECT id FROM hunts_Puzzle WHERE (SELECT guild_id FROM hunts_Hunt WHERE id = hunt_id) = ? AND name = ?)
+            )""", update_data)
+        self.conn.commit()
+        cursor.close()
+
+    def puzzle_get_feeders(self, guild_id, hunt_category_id, channel_id=None, name=None):
+        cursor = self.conn.cursor()
+        if channel_id is not None:
+            res = cursor.execute("""
+                SELECT name, channel_id, answer FROM (
+                    (
+                        SELECT * FROM hunts_Puzzle_Feeders WHERE from_puzzle_id = (
+                            SELECT id FROM hunts_Puzzle WHERE
+                                (?, ?) IN (SELECT guild_id, category_id FROM hunts_Hunt WHERE id = hunt_id) AND
+                                channel_id = ?
+                        )
+                    ) AS 'feeders'
+                    JOIN
+                    (SELECT * FROM hunts_Puzzle) AS 'puzzles'
+                    ON feeders.to_puzzle_id = puzzles.id
+                )
+            """, (guild_id, hunt_category_id, channel_id))
+            feeders = res.fetchall()
+            if feeders is not None:
+                return feeders
+        elif name is not None:
+            res = cursor.execute("""
+                SELECT name, channel_id, answer FROM (
+                    (
+                        SELECT * FROM hunts_Puzzle_Feeders WHERE from_puzzle_id = (
+                            SELECT id FROM hunts_Puzzle WHERE
+                                (?, ?) IN (SELECT guild_id, category_id FROM hunts_Hunt WHERE id = hunt_id) AND
+                                name = ?
+                        )
+                    ) AS 'feeders'
+                    JOIN
+                    (SELECT id, name FROM hunts_Puzzle) AS 'puzzles'
+                    ON feeders.from_puzzle_id = puzzles.id
+                )
+            """, (guild_id, hunt_category_id, name))
+            feeders = res.fetchall()
+            if feeders is not None:
+                return feeders
+        return None
+
 
     # Tags
     # TODO port this over to new db schema
