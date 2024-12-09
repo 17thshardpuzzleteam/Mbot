@@ -39,12 +39,14 @@ bot.remove_command('help')
 
 # Development Commands #######################################################
 
-# @bot.listen()
-# async def on_message(message):
-#     if message.author == bot.user:
-#         return
-#     if message.content.lower() =='pping':
-#         await message.channel.send('Pong!')
+@bot.listen()
+async def on_message(message):
+    # override "bots can't execute other bots' commands" specifically for shardboard
+    message.content.lower()
+    if message.author.bot and message.author.name == 'Shardboard':
+        ctx = await bot.get_context(message)
+        parts = message.content.split(' ', 1)
+        await ctx.invoke(bot.get_command(parts[0][1:].lower()), query=parts[1])
 
 @bot.command(name='load')
 @commands.is_owner()
