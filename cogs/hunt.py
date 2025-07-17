@@ -1355,18 +1355,19 @@ class HuntCog(commands.Cog):
         """
 
         if not query or '-folder' not in query:
-            await ctx.send('Usage: `!createhunt <huntname> -folder=<folder> [-role=<roleid>] [-bighunt] [-logfeed=<logfeedid>]`')
+            await ctx.send('Usage: `!createhunt <huntname> -folder=<folder> [-no-role] [-bighunt] [-logfeed=<logfeedid>]`\n'
+                           'Don\'t forget to share the hunt folder with `' + self.drive.googledata['client_email'] + '`!')
             return False
 
         query_parts = query.split(' -')
         hunt_name = query_parts[0]
-        hunt_role_id = '0'
+        no_role = False
         hunt_folder = ''
         is_bighunt = False
         logfeed_id = '0'
         for part in query_parts[1:]:
-            if part.startswith('role'):
-                hunt_role_id = part.split('=')[1]
+            if part.startswith('no-role'):
+                no_role = True
             elif part.startswith('folder'):
                 hunt_folder = part.split('=')[1]
             elif part.startswith('bighunt'):
@@ -1376,8 +1377,9 @@ class HuntCog(commands.Cog):
         info_msg = await ctx.send(':orange_circle: Creating hunt `{}`...'.format(hunt_name))
 
         position = ctx.message.channel.category.position
-        if hunt_role_id != '0':
-            hunt_role = discord.utils.get(ctx.guild.roles, id=int(hunt_role_id))
+        hunt_role = None
+        if not no_role:
+            hunt_role = await ctx.guild.create_role(name=hunt_name)
             bot_member = self.bot.user
             overwrites = {
                 ctx.guild.default_role: discord.PermissionOverwrite(read_messages=False, connect=False),
@@ -1385,6 +1387,7 @@ class HuntCog(commands.Cog):
                 bot_member: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True, connect=True, manage_messages=True)
             }
             hunt_category = await ctx.guild.create_category(hunt_name, overwrites=overwrites, position=position)
+            await ctx.message.author.add_roles(hunt_role)
         else:
             hunt_category = await ctx.guild.create_category(hunt_name, position=position)
 
@@ -1393,13 +1396,41 @@ class HuntCog(commands.Cog):
 
         nexus_url = self.make_hunt_nexus(hunt_name, hunt_folder)
         db = DBase(ctx)
-        await db.hunt_insert_row(ctx.guild.id, hunt_category.id, hunt_role_id, hunt_folder, nexus_url, is_bighunt, logfeed_id)
+        await db.hunt_insert_row(ctx.guild.id, hunt_category.id, hunt_role.id if hunt_role is not None else 0, hunt_folder, nexus_url, is_bighunt, logfeed_id)
 
         nexus_msg = await hunt_channel.send('Nexus sheet: {}'.format(nexus_url))
         await nexus_msg.pin()
 
         await info_msg.edit(content=':orange_circle: Hunt created: {}'.format(hunt_channel.mention))
         return
+
+    @commands.command(aliases=['team', 'member', 'members'])
+    @commands.guild_only()
+    async def team_member(self, ctx, *, query=None):
+        hunt_info = await self.get_hunt_db_info(ctx)
+        role = ctx.guild.get_role(await self.get_hunt_role_id(ctx, hunt_info))
+        query_parts = query.split(' ')
+        mode = query_parts[0]
+
+        if mode != 'add' and mode != 'remove':
+            await ctx.send('Usage: `!team <add|remove> [member1] [member2] ...')
+            return
+        await ctx.send('Removing members...' if mode == 'remove' else 'Adding members...')
+        done_users = []
+        for username in query_parts[1:]:
+            user = ctx.guild.get_member_named(username)
+            if user is None:
+                await ctx.send('Failed to find team member with username "' + username + '"')
+            else:
+                if mode == 'remove':
+                    await user.remove_roles(role)
+                else:
+                    await user.add_roles(role)
+                done_users.append('<@' + str(user.id) + '>')
+        if len(done_users) > 0:
+            await ctx.send('Successfully ' + ('removed' if mode == 'remove' else 'added') +
+                ' members ' + ', '.join(done_users) + ' ' + ('from' if mode == 'remove' else 'to') +
+                ' hunt: ' + ctx.message.channel.category.name)
 
     @commands.command(aliases=['contacts'])
     @commands.guild_only()
