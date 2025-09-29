@@ -183,15 +183,21 @@ class DBase:
         cursor.close()
         return
 
-    def puzzle_update_row(self, update_data, guild_id, hunt_category_id, channel_id):
+    def puzzle_update_row(self, update_data, guild_id, hunt_category_id, channel_id=None, puzzle_id=None):
         cursor = self.conn.cursor()
         updates, values = make_updates(update_data)
-        values.append(guild_id)
-        values.append(hunt_category_id)
-        values.append(channel_id)
-        cursor.execute("""
-            UPDATE hunts_Puzzle SET """ + updates + """WHERE hunt_id = (SELECT id FROM hunts_Hunt WHERE guild_id = ? AND category_id = ?) AND channel_id = ?
-        """, tuple(values))
+        if channel_id is not None:
+            values.append(guild_id)
+            values.append(hunt_category_id)
+            values.append(channel_id)
+            cursor.execute("""
+                UPDATE hunts_Puzzle SET """ + updates + """WHERE hunt_id = (SELECT id FROM hunts_Hunt WHERE guild_id = ? AND category_id = ?) AND channel_id = ?
+            """, tuple(values))
+        elif puzzle_id is not None:
+            values.append(puzzle_id)
+            cursor.execute("""
+                UPDATE hunts_Puzzle SET """ + updates + """WHERE id = ?
+            """, tuple(values))
         self.conn.commit()
         cursor.close()
         return
@@ -255,6 +261,27 @@ class DBase:
                 return feeders
         return None
 
+    def puzzles_get_pending(self, guild_id, hunt_category_id):
+        cursor = self.conn.cursor()
+        res = cursor.execute("""
+            SELECT id, name, marker FROM (
+                (
+                    SELECT id, name, round_id FROM
+                        (
+                            SELECT id, name FROM hunts_Puzzle WHERE
+                                (?, ?) IN (SELECT guild_id, category_id FROM hunts_Hunt WHERE id = hunt_id) AND channel_id < 0
+                            ORDER BY channel_id
+                        ) AS 'puzzles'
+                        JOIN
+                        (SELECT puzzle_id, round_id FROM hunts_Puzzle_Rounds) AS 'link'
+                        ON puzzles.id = link.puzzle_id
+                ) AS 'linked'
+                JOIN
+                (SELECT id AS round_id, marker FROM hunts_Round) AS 'rounds'
+                ON linked.round_id = rounds.round_id
+            )
+        """, (guild_id, hunt_category_id))
+        return res.fetchall()
 
     # Tags
     # TODO port this over to new db schema

@@ -19,6 +19,7 @@ import time
 from utils.db import DBase
 from utils.drive import Drive
 import os
+import asyncio
 
 
 # A cog for puzzle management
@@ -139,9 +140,11 @@ class HuntCog(commands.Cog):
             await ctx.send(str(e))
             return {}
 
-    def get_round_db_info(self, ctx, round_name=None):
+    def get_round_db_info(self, ctx, round_name=None, round_marker=None):
         if round_name is not None:
             return DBase(ctx).round_get_row(ctx.guild.id, name=round_name)
+        elif round_marker is not None:
+            return DBase(ctx).round_get_row(ctx.guild.id, marker=round_marker)
         return DBase(ctx).round_get_row(ctx.guild.id, category_id=ctx.message.channel.category.id)
 
     def get_puzzle_db_info(self, ctx, hunt_category_id, puzzle_name=None):
@@ -359,6 +362,13 @@ class HuntCog(commands.Cog):
             self.contact_update_queue = {}
             self.contact_update_thread = None
         return
+
+    async def watch_db(self, ctx):
+        while True:
+            hunt_info = await self.get_hunt_db_info(ctx)
+            for pending in DBase(ctx).puzzles_get_pending(ctx.guild.id, hunt_info['category_id']):
+                await self.create_puzzle(ctx, query=pending['name'] + ' -round=' + pending['marker'], hunt_info=hunt_info, db_id=pending['id'])
+            await asyncio.sleep(5)
 
     # events #
 
@@ -664,7 +674,7 @@ class HuntCog(commands.Cog):
 
     @commands.command(aliases=['create','createpuzzle', 'puzzle'])
     @commands.guild_only()
-    async def create_puzzle(self, ctx, *, query=None, is_multi=False, hunt_info=None):
+    async def create_puzzle(self, ctx, *, query=None, is_multi=False, hunt_info=None, db_id=None):
         """ puzzle creation script to
         1) make channel
         2) copy template sheet
@@ -703,8 +713,14 @@ class HuntCog(commands.Cog):
                     roundcategory = discord.utils.get(ctx.guild.channels, id=round_info['category_id'])
                     roundmarker = round_info['marker']
                 else:
-                    await ctx.send('Round name `{}` does not exist for this hunt. Please create it first using `!createround`'.format(roundname))
-                    return False
+                    round_info = self.get_round_db_info(ctx, round_marker=roundname)
+                    if round_info is not None:
+                        roundcategory = discord.utils.get(ctx.guild.channels, id=round_info['category_id'])
+                        roundname = round_info['name']
+                        roundmarker = round_info['marker']
+                    else:
+                        await ctx.send('Round name `{}` does not exist for this hunt. Please create it first using `!createround`'.format(roundname))
+                        return False
         elif self.is_bighunt(hunt_info):
             roundname = ctx.channel.category.name
             roundid = ctx.channel.category.id
@@ -729,10 +745,11 @@ class HuntCog(commands.Cog):
         elif self.is_bighunt(hunt_info) and self.check_server_channel_list(ctx, puzzlename):
             await ctx.send('Channel named `{}` already exists in current server.'.format(puzzlename))
             return False
-        puzzle = self.get_puzzle_db_info(ctx, hunt_info['category_id'], puzzle_name=puzzlename)
-        if puzzle is not None:
-            await ctx.send('Puzzle named `{}` already exists in Nexus.'.format(puzzlename))
-            return False
+        if not db_id is not None:
+            puzzle = self.get_puzzle_db_info(ctx, hunt_info['category_id'], puzzle_name=puzzlename)
+            if puzzle is not None:
+                await ctx.send('Puzzle named `{}` already exists in Nexus.'.format(puzzlename))
+                return False
 
         if not is_multi:
             infomsg = await ctx.send(':yellow_circle: Creating puzzle `{}`'.format(puzzlename))
@@ -743,7 +760,15 @@ class HuntCog(commands.Cog):
         msg = await newchannels[0].send(newsheet_url)
         await msg.pin()
         self.nexus_add_puzzle(nexussheet=nexus_sheet, hunt_info=hunt_info, nexus_data=nexus_data, puzzlechannel=newchannels[0], voicechannel=newchannels[1], puzzlename=puzzlename, puzzlesheeturl=newsheet_url, roundmarker=roundmarker, is_meta=is_meta)
-        DBase(ctx).puzzle_insert_row(ctx.guild.id, hunt_info['category_id'], newchannels[0].id, newchannels[1].id if newchannels[1] is not None else None, puzzlename, newsheet_url, is_meta, roundname)
+        if db_id is not None:
+            update_info = [
+                ('channel_id', newchannels[0].id),
+                ('voice_channel_id', newchannels[1].id if newchannels[1] is not None else None),
+                ('spreadsheet_link', newsheet_url)
+            ]
+            DBase(ctx).puzzle_update_row(update_info, ctx.guild.id, hunt_info['category_id'], puzzle_id=db_id)
+        else:
+            DBase(ctx).puzzle_insert_row(ctx.guild.id, hunt_info['category_id'], newchannels[0].id, newchannels[1].id if newchannels[1] is not None else None, puzzlename, newsheet_url, is_meta, roundname)
         if self.is_bighunt(hunt_info):
             self.cache_vc_for_contact(newchannels[1].id, newsheet_url)
 
@@ -822,7 +847,7 @@ class HuntCog(commands.Cog):
         except IndexError:
             row_data[0].append(time)
         nexus_sheet.update(edit_row, row_data)
-        DBase(ctx).puzzle_update_row([('answer', query.upper()), ('priority', 'Solved'), ('solve_time', datetime.now())], ctx.guild.id, hunt_info['category_id'], ctx.message.channel.id)
+        DBase(ctx).puzzle_update_row([('answer', query.upper()), ('priority', 'Solved'), ('solve_time', datetime.now())], ctx.guild.id, hunt_info['category_id'], channel_id=ctx.message.channel.id)
 
         # update sheet to indicate solve
         col_select = lib['Puzzle Name'][0]
@@ -944,7 +969,7 @@ class HuntCog(commands.Cog):
         col_select = lib['Solved At'][0]
         row_data[0][col_select] = ''
         nexus_sheet.update(edit_row, row_data)
-        DBase(ctx).puzzle_update_row([('answer', None), ('priority', 'New'), ('solve_time', None)], ctx.guild.id, hunt_info['category_id'], ctx.message.channel.id)
+        DBase(ctx).puzzle_update_row([('answer', None), ('priority', 'New'), ('solve_time', None)], ctx.guild.id, hunt_info['category_id'], channel_id=ctx.message.channel.id)
 
 
         # undo the coloring stuff
@@ -1038,7 +1063,7 @@ class HuntCog(commands.Cog):
             nexussheet.update_cell(row_select, col_select, data_notes[row_select-3]+'; '+query)
         else:
             nexussheet.update_cell(row_select, col_select, query)
-        DBase(ctx).puzzle_update_row([('notes', query)], ctx.guild.id, hunt_info['category_id'], ctx.message.channel.id)
+        DBase(ctx).puzzle_update_row([('notes', query)], ctx.guild.id, hunt_info['category_id'], channel_id=ctx.message.channel.id)
 
         await ctx.send('Updated column Notes for puzzle: {}'.format(puzzlename))
 
@@ -1073,7 +1098,7 @@ class HuntCog(commands.Cog):
             notes = data_notes[row_select-3].split(';')
             notes.pop()
             nexussheet.update_cell(row_select, col_select, '; '.join(notes))
-            DBase(ctx).puzzle_update_row([('notes', '; '.join(notes))], ctx.guild.id, hunt_info['category_id'], ctx.message.channel.id)
+            DBase(ctx).puzzle_update_row([('notes', '; '.join(notes))], ctx.guild.id, hunt_info['category_id'], channel_id=ctx.message.channel.id)
             await ctx.send('Removed last note from puzzle: {}'.format(puzzlename))
         else:
             await ctx.send('No notes to remove from puzzle: {}'.format(puzzlename))
@@ -1154,7 +1179,7 @@ class HuntCog(commands.Cog):
                 await ctx.send('Updated column Is Meta for puzzle: {}'.format(puzzlename))
             else:
                 await ctx.send('Check key name. Column {} not updateable via bot.'.format(item))
-        DBase(ctx).puzzle_update_row(db_update_data, ctx.guild.id, hunt_info['category_id'], ctx.message.channel.id)
+        DBase(ctx).puzzle_update_row(db_update_data, ctx.guild.id, hunt_info['category_id'], channel_id=ctx.message.channel.id)
 
     @commands.command(aliases=['feeders'])
     @commands.guild_only()
@@ -1524,6 +1549,19 @@ class HuntCog(commands.Cog):
                 except AttributeError:
                     pass
             await ctx.channel.delete()
+
+    @commands.command(aliases=['watch'])
+    @commands.has_role('organiser')
+    @commands.guild_only()
+    async def start_hunt_watch(self, ctx):
+        # todo option to stop instead of start watching
+        name = (await self.get_hunt_db_info(ctx))['name']
+        for task in asyncio.all_tasks():
+            if task.get_name() == 'watch_' + name:
+                await ctx.send('Already watching database for hunt: ' + name)
+                return
+        asyncio.Task(self.watch_db(ctx), name='watch_' + name)
+        await ctx.send('Success! Now watching database for hunt: ' + name)
 
 
 async def setup(bot):
