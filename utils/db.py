@@ -130,7 +130,7 @@ class DBase:
         if hunt is None:
             raise Exception('Could not find a hunt!')
         cursor.execute("""
-            INSERT INTO hunts_Round (name, marker, category_id, hunt_id) VALUES (?, ?, ?, ?)
+            INSERT INTO hunts_Round (name, marker, category_id, hunt_id, update_flag) VALUES (?, ?, ?, ?, 0)
         """, (name, marker, category_id, hunt['id']))
         self.conn.commit()
         cursor.close()
@@ -168,9 +168,9 @@ class DBase:
             raise Exception('Could not find a hunt!')
         cursor.execute("""
             INSERT INTO hunts_Puzzle
-                (name, channel_id, voice_channel_id, spreadsheet_link, priority, is_meta, unlock_time, hunt_id)
+                (name, channel_id, voice_channel_id, spreadsheet_link, priority, is_meta, unlock_time, hunt_id, update_flag)
                 VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?)
+                (?, ?, ?, ?, ?, ?, ?, ?, 0)
         """, (name, channel_id, voice_channel_id, spreadsheet_link, 'New', is_meta, datetime.now(), hunt['id']))
         if round_name is not None:
             cursor.execute("""
@@ -261,15 +261,15 @@ class DBase:
                 return feeders
         return None
 
-    def puzzles_get_pending(self, guild_id, hunt_category_id):
+    def puzzles_get_updated(self, guild_id, hunt_category_id):
         cursor = self.conn.cursor()
         res = cursor.execute("""
-            SELECT id, name, marker FROM (
+            SELECT id, name, marker, channel_id, answer FROM (
                 (
-                    SELECT id, name, round_id FROM
+                    SELECT id, name, round_id, channel_id, answer FROM
                         (
-                            SELECT id, name FROM hunts_Puzzle WHERE
-                                (?, ?) IN (SELECT guild_id, category_id FROM hunts_Hunt WHERE id = hunt_id) AND channel_id < 0
+                            SELECT id, name, channel_id, answer FROM hunts_Puzzle WHERE
+                                (?, ?) IN (SELECT guild_id, category_id FROM hunts_Hunt WHERE id = hunt_id) AND update_flag = 1
                             ORDER BY channel_id
                         ) AS 'puzzles'
                         JOIN
@@ -282,6 +282,16 @@ class DBase:
             )
         """, (guild_id, hunt_category_id))
         return res.fetchall()
+
+    def puzzles_resolve_updated(self, ids):
+        if len(ids) == 0:
+            return
+        cursor = self.conn.cursor()
+        ids_to_update = ','.join(ids)
+        cursor.execute("""
+            UPDATE hunts_Puzzle SET update_flag = 0 WHERE id IN (""" + ids_to_update + """)
+        """)
+        self.conn.commit()
 
     # Tags
     # TODO port this over to new db schema

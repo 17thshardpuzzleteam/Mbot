@@ -120,6 +120,10 @@ class HuntCog(commands.Cog):
             await discord.utils.get(ctx.guild.channels, id=vc).delete()
         except AttributeError:
             pass
+        for deletion in self.vc_delete_queue:
+            if deletion[1] == vc:
+                self.vc_delete_queue.remove(deletion)
+                break
         await solve_message.edit(content='`{}` marked as solved!'.format(puzzlename))
 
     async def send_log_message(self, ctx, hunt_info, msg):
@@ -366,8 +370,17 @@ class HuntCog(commands.Cog):
     async def watch_db(self, ctx):
         while True:
             hunt_info = await self.get_hunt_db_info(ctx)
-            for pending in DBase(ctx).puzzles_get_pending(ctx.guild.id, hunt_info['category_id']):
-                await self.create_puzzle(ctx, query=pending['name'] + ' -round=' + pending['marker'], hunt_info=hunt_info, db_id=pending['id'])
+            updated_puzzles = DBase(ctx).puzzles_get_updated(ctx.guild.id, hunt_info['category_id'])
+            for puzzle in updated_puzzles:
+                # if the puzzle doesn't exist, create it
+                if puzzle['channel_id'] < 0:
+                    await self.create_puzzle(ctx, query=puzzle['name'] + ' -round=' + puzzle['marker'], hunt_info=hunt_info, db_id=puzzle['id'])
+                # if the puzzle should be solve, make it so
+                if puzzle['answer'] is not None and not ctx.guild.get_channel(puzzle['channel_id']).name.startswith(self.mark):
+                    await self.solve_puzzle(ctx, query=puzzle['answer'], db_channel=puzzle['channel_id'])
+            # regardless of what we've done, mark all of the updates as resolved
+            DBase(ctx).puzzles_resolve_updated(list(map(lambda p: str(p['id']), updated_puzzles)))
+
             await asyncio.sleep(5)
 
     # events #
@@ -811,7 +824,7 @@ class HuntCog(commands.Cog):
 
     @commands.command(aliases=['solve'])
     @commands.guild_only()
-    async def solve_puzzle(self, ctx, *, query=None):
+    async def solve_puzzle(self, ctx, *, query=None, db_channel=None):
         """ update puzzle in nexus with answer and solved priority """
 
         hunt_info = await self.get_hunt_db_info(ctx)
@@ -830,10 +843,13 @@ class HuntCog(commands.Cog):
         lib = self.nexus_sort_columns(headings)
 
         # update column of choice (row_select) in correct row
-        # 1) assume command was run in correct channel
+        # 1) assume command was run in correct channel unless we have a database channel id
         # 2) assume channel ID exists in nexus 
         data_id = [item[lib['Channel ID'][0]] for item in data_all]
-        row_select = data_id.index(str(ctx.channel.id))+1
+        if db_channel is not None:
+            row_select = data_id.index(str(db_channel))+1
+        else:
+            row_select = data_id.index(str(ctx.channel.id))+1
         edit_row = "A" + str(row_select) + ":" + gspread.utils.rowcol_to_a1(row_select, len(headings))
         row_data = nexus_sheet.get(edit_row)
         col_select = lib['Answer'][0]
@@ -847,7 +863,10 @@ class HuntCog(commands.Cog):
         except IndexError:
             row_data[0].append(time)
         nexus_sheet.update(edit_row, row_data)
-        DBase(ctx).puzzle_update_row([('answer', query.upper()), ('priority', 'Solved'), ('solve_time', datetime.now())], ctx.guild.id, hunt_info['category_id'], channel_id=ctx.message.channel.id)
+        if db_channel is not None:
+            await ctx.guild.get_channel(db_channel).send('Puzzled solved with answer: ' + query.upper())
+        else:
+            DBase(ctx).puzzle_update_row([('answer', query.upper()), ('priority', 'Solved'), ('solve_time', datetime.now())], ctx.guild.id, hunt_info['category_id'], channel_id=ctx.message.channel.id)
 
         # update sheet to indicate solve
         col_select = lib['Puzzle Name'][0]
@@ -900,8 +919,9 @@ class HuntCog(commands.Cog):
                 })
         puzzle_sheet.batch_update({"requests": requests})
 
+        actual_channel = ctx.guild.get_channel(db_channel) if db_channel is not None else ctx.message.channel
         # prepare to move channel down
-        channels = ctx.message.channel.category.text_channels
+        channels = actual_channel.category.text_channels
         offset = -1
         for c in channels:
             if self.mark in c.name:
@@ -910,27 +930,25 @@ class HuntCog(commands.Cog):
 
         # update user of solve
         puzzlename = data_all[row_select - 1][lib['Puzzle Name'][0]]
-        if self.mark not in ctx.channel.name:
+        if self.mark not in actual_channel.name:
             emote = random.choice(
                 ['gemheart', 'bang', 'face_explode', 'face_hearts', 'face_openmouth', 'face_party', 'face_stars',
                  'party', 'rocket', 'star', 'mbot', 'slug'])
             filepath = './misc/emotes/' + emote + '.png'
-            solve_message = await ctx.send(content=('`{}` marked as solved!' + (' Voice chat will be deleted in **2 minutes**.' if self.is_bighunt(hunt_info) else '')).format(puzzlename), file=discord.File(filepath))
-            await ctx.channel.move(beginning=True, offset=offset)
-            await ctx.channel.edit(name=self.mark + ctx.channel.name)
+            solve_message = await actual_channel.send(content=('`{}` marked as solved!' + (' Voice chat will be deleted in **2 minutes**.' if self.is_bighunt(hunt_info) else '')).format(puzzlename), file=discord.File(filepath))
+            await actual_channel.move(beginning=True, offset=offset)
+            await actual_channel.edit(name=self.mark + actual_channel.name)
 
             if self.is_bighunt(hunt_info):
                 now = datetime.utcnow() - timedelta(hours=5)
                 dt_string = now.strftime("%Y/%m/%d %H:%M:%S")
-                await self.send_log_message(ctx, hunt_info, '[' + dt_string + ' EST] :green_circle: Puzzle solved: {} (Round: `{}` ~ Answer: `{}`)'.format(ctx.message.channel.mention, ctx.message.channel.category, query.upper()))
-                deletion = (ctx.channel.id,
-                            asyncio.create_task(self.voice_channel_delayed_delete(ctx, int(
-                                data_all[row_select - 1][lib['Voice Channel ID'][0]]), puzzlename, solve_message)))
+                await self.send_log_message(ctx, hunt_info, '[' + dt_string + ' EST] :green_circle: Puzzle solved: {} (Round: `{}` ~ Answer: `{}`)'.format(actual_channel.mention, actual_channel.category, query.upper()))
+                vc_id = int(data_all[row_select - 1][lib['Voice Channel ID'][0]])
+                deletion = (actual_channel.id, vc_id,
+                            asyncio.create_task(self.voice_channel_delayed_delete(ctx, vc_id, puzzlename, solve_message)))
                 self.vc_delete_queue.append(deletion)
-                await deletion[1]
-                self.vc_delete_queue.remove(deletion)
         else:
-            await ctx.send('Updated solution (again): {}'.format(puzzlename))
+            await actual_channel.send('Updated solution (again): {}'.format(puzzlename))
 
     @commands.command(aliases=['undosolve','imessedup','unsolve'])
     @commands.guild_only()
@@ -943,7 +961,7 @@ class HuntCog(commands.Cog):
         if self.is_bighunt(hunt_info):
             for vc in self.vc_delete_queue:
                 if vc[0] == ctx.channel.id:
-                    vc[1].cancel()
+                    vc[2].cancel()
                     self.vc_delete_queue.remove(vc)
                     break
 
