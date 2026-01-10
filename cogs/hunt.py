@@ -1205,7 +1205,7 @@ class HuntCog(commands.Cog):
         hunt_info = await self.get_hunt_db_info(ctx)
         puzzle_info = self.get_puzzle_db_info(ctx, hunt_info['category_id'])
         if not puzzle_info['is_meta']:
-            await ctx.send('`{}` is not a meta!').format(puzzle_info['name'])
+            await ctx.send('`{}` is not a meta!'.format(puzzle_info['name']))
             return
 
         if query is None or query == 'list':
