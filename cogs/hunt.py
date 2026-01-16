@@ -1384,12 +1384,13 @@ class HuntCog(commands.Cog):
         """
 
         if not query or '-folder' not in query:
-            await ctx.send('Usage: `!createhunt <huntname> -folder=<folder> [-role=<roleid>] [-bighunt] [-bighuntpass=<bighuntpass>] [-logfeed=<logfeedid>]`')
+            await ctx.send('Usage: `!createhunt <huntname> -folder=<folder> [-no-role] [-role=<roleid>] [-bighunt] [-bighuntpass=<bighuntpass>] [-logfeed=<logfeedid>]`')
             return False
 
         query_parts = query.split(' -')
         hunt_name = query_parts[0]
         no_role = False
+        role_id = None
         hunt_folder = ''
         is_bighunt = False
         logfeed_id = None
@@ -1397,6 +1398,8 @@ class HuntCog(commands.Cog):
         for part in query_parts[1:]:
             if part.startswith('no-role'):
                 no_role = True
+            elif part.startswith('role'):
+                role_id = part.split('=')[1]
             elif part.startswith('folder'):
                 hunt_folder = part.split('=')[1]
             elif part.startswith('bighuntpassword') or part.startswith('bighuntpass') or part.startswith('bighuntpswd'):
@@ -1413,7 +1416,10 @@ class HuntCog(commands.Cog):
         position = ctx.message.channel.category.position
         hunt_role = None
         if not no_role:
-            hunt_role = await ctx.guild.create_role(name=hunt_name)
+            if role_id is not None:
+                hunt_role = discord.utils.get(ctx.guild.roles, id=int(role_id))
+            else:
+                hunt_role = await ctx.guild.create_role(name=hunt_name)
             bot_member = self.bot.user
             overwrites = {
                 ctx.guild.default_role: discord.PermissionOverwrite(read_messages=False, connect=False),
