@@ -105,14 +105,14 @@ class DBase:
             rnd = res.fetchone()
             if rnd is not None:
                 return rnd
-        elif name is not None:
+        if name is not None:
             res = cursor.execute("""
                 SELECT * FROM hunts_Round WHERE (SELECT guild_id FROM hunts_Hunt WHERE id = hunt_id) = ? AND name = ?
             """, (guild_id, name))
             rnd = res.fetchone()
             if rnd is not None:
                 return rnd
-        elif marker is not None:
+        if marker is not None:
             res = cursor.execute("""
                 SELECT * FROM hunts_Round WHERE (SELECT guild_id FROM hunts_Hunt WHERE id = hunt_id) = ? AND marker = ?
             """, (guild_id, marker))

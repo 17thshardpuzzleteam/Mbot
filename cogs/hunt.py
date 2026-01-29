@@ -1199,6 +1199,28 @@ class HuntCog(commands.Cog):
                 await ctx.send('Check key name. Column {} not updateable via bot.'.format(item))
         DBase(ctx).puzzle_update_row(db_update_data, ctx.guild.id, hunt_info['category_id'], channel_id=ctx.message.channel.id)
 
+
+    @commands.command(aliases=['move', 'moveto'])
+    @commands.guild_only()
+    async def move_puzzle_to(self, ctx, *, query=None):
+        hunt_info = await self.get_hunt_db_info(ctx)
+
+        if not self.is_bighunt(hunt_info):
+            await ctx.send("This command is only available in bighunt mode.")
+            return
+
+        if not query:
+            await ctx.send('`!moveto <round name or marker>`')
+            return
+
+        round_info = DBase(ctx).round_get_row(ctx.guild.id, None, query.strip(), query.strip())
+        await ctx.message.channel.move(beginning=True, offset=1, category=ctx.guild.get_channel(round_info['category_id']))
+        DBase(ctx).puzzle_update_row([('round_id', round_info['id'])], ctx.guild.id, hunt_info['category_id'],
+                                     channel_id=ctx.message.channel.id)
+
+        await ctx.send('Moved puzzle <#{}> to round: `{} {}`'.format(ctx.message.channel.id,
+                                                                     round_info['marker'], round_info['name']))
+
     @commands.command(aliases=['feeders'])
     @commands.guild_only()
     async def puzzle_feeders(self, ctx, *, query=None):
