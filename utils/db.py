@@ -168,17 +168,10 @@ class DBase:
             raise Exception('Could not find a hunt!')
         cursor.execute("""
             INSERT INTO hunts_Puzzle
-                (name, channel_id, voice_channel_id, spreadsheet_link, priority, is_meta, unlock_time, hunt_id, update_flag)
+                (name, channel_id, voice_channel_id, spreadsheet_link, priority, is_meta, unlock_time, hunt_id, round_id, update_flag)
                 VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, 0)
-        """, (name, channel_id, voice_channel_id, spreadsheet_link, 'New', is_meta, datetime.now(), hunt['id']))
-        if round_name is not None:
-            cursor.execute("""
-                INSERT INTO hunts_Puzzle_Rounds
-                    (puzzle_id, round_id)
-                    VALUES
-                    (?, (SELECT id FROM hunts_Round WHERE (SELECT guild_id FROM hunts_Hunt WHERE id = hunt_id) = ? AND name = ?))
-            """, (cursor.lastrowid, guild_id, round_name))
+                (?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM hunts_Round WHERE (SELECT guild_id FROM hunts_Hunt WHERE id = hunt_id) = ? AND name = ?), 0)
+        """, (name, channel_id, voice_channel_id, spreadsheet_link, 'New', is_meta, datetime.now(), hunt['id'], guild_id, round_name))
         self.conn.commit()
         cursor.close()
         return
@@ -264,22 +257,17 @@ class DBase:
     def puzzles_get_updated(self, guild_id, hunt_category_id):
         cursor = self.conn.cursor()
         res = cursor.execute("""
-            SELECT id, name, marker, channel_id, answer FROM (
+            SELECT id, name, marker, channel_id, answer FROM
                 (
-                    SELECT id, name, round_id, channel_id, answer FROM
-                        (
-                            SELECT id, name, channel_id, answer FROM hunts_Puzzle WHERE
-                                (?, ?) IN (SELECT guild_id, category_id FROM hunts_Hunt WHERE id = hunt_id) AND update_flag = 1
-                            ORDER BY channel_id
-                        ) AS 'puzzles'
-                        JOIN
-                        (SELECT puzzle_id, round_id FROM hunts_Puzzle_Rounds) AS 'link'
-                        ON puzzles.id = link.puzzle_id
-                ) AS 'linked'
+                    SELECT id, name, round_id, channel_id, answer FROM hunts_Puzzle WHERE
+                        (?, ?) IN (SELECT guild_id, category_id FROM hunts_Hunt WHERE id = hunt_id) AND update_flag = 1
+                    ORDER BY channel_id
+                ) AS 'puzzles'
                 JOIN
-                (SELECT id AS round_id, marker FROM hunts_Round) AS 'rounds'
-                ON linked.round_id = rounds.round_id
-            )
+                (
+                    SELECT id AS round_id, marker FROM hunts_Round
+                ) AS 'rounds'
+                ON puzzles.round_id = rounds.round_id
         """, (guild_id, hunt_category_id))
         return res.fetchall()
 
