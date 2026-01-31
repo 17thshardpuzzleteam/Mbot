@@ -32,7 +32,7 @@ DATABASE_PATH= ... # the relative path to your database file
 ```
 2. Enable Google API following instructions on [gspread documentation](https://gspread.readthedocs.io/en/latest/oauth2.html#for-bots-using-service-account) to get a `client_secrets.json` for a service account.
    1. If using OAuth2, follow the instructions the "For End Users: Using OAuth Client ID" section of the page
-   2. Then, run `get_google_auth.py` and paste the `GOOGLE_OAUTH_AUTH_USER` token it gives into your `.env` file. The script requires a browser to open the Google signin page, but once the token is acquired the bot can run on any computer.
+   2. Then (for OAuth2 only), run `get_google_auth.py` and paste the `GOOGLE_OAUTH_AUTH_USER` token it gives into your `.env` file. The script requires a browser to open the Google signin page, but once the token is acquired and put in `.env`, the bot can run on any computer.
 3. Initialize the database tables.  This can either be done:
    1. [forthcoming] on the M-Bot side (or for standalone M-Bot) via `python utils/db_init.py`. Note that this may require replacing the database or generating your own update scripts if new changes are made in the future.
    2. on the Shardboard side via the usual Django database commands (`python manage.py makemigrations`/`python manage.py migrate`)

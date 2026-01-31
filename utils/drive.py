@@ -21,9 +21,6 @@ class Drive:
     def __init__(self):
         # TODO: has to be a less silly way to organize this
         load_dotenv()
-        self.key = os.getenv('GOOGLE_CLIENT_SECRETS')
-        self.googledata = json.loads(self.key)
-        self.googledata['private_key'] = self.googledata['private_key'].replace("\\n", "\n")
         self.oauthkey = os.getenv('GOOGLE_OAUTH_SECRETS')
         self.googleoauthdata = json.loads(self.oauthkey)
         scopes = [
