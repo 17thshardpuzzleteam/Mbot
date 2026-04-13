@@ -10,5 +10,5 @@ datetime==5.4
 google-auth==2.27.0
 boto3==1.26.28
 matplotlib>=3.7.0
-pillow==10.3.0
+pillow==12.2.0
 
